@@ -98,13 +98,13 @@ A **frame skip** control lets you keep every Nth frame for temporal downsampling
 
 During recording, the frame timestep is fixed (independent of machine speed) to ensure even frame spacing in the output.
 
-## Web Demo
-
-A browser-based port is [available as a live demo](https://vasileios-bellos.github.io/BloomingRoseField/). Built with Three.js, it reproduces the animation with real-time 3D rendering and touch support, preserving the exact parametric equations, Bézier stem curves, Frenet-frame tube meshing, Rodrigues rotation and all 19 colormaps from the original MATLAB script. It renders 700 roses at 150×150 mesh resolution blooming over 120 frames, using a shared index buffer and frame-rate-independent delta-time scaling normalized to 30 fps.
-
 ## Standalone App (Windows)
 
 `BloomingRoseField_installer.exe` installs a compiled standalone version that runs without the need for a local MATLAB installation. The installer will automatically download and install the MATLAB Runtime (R2025b) if it is not already present on the system.
+
+## Web Demo
+
+A browser-based port is [available as a live demo](https://vasileios-bellos.github.io/BloomingRoseField/). Built with Three.js, it reproduces the animation with real-time 3D rendering and touch support, preserving the exact parametric equations, Bézier stem curves, Frenet-frame tube meshing, Rodrigues rotation and all 19 colormaps from the original MATLAB script. It renders 700 roses at 150×150 mesh resolution blooming over 120 frames, using a shared index buffer and frame-rate-independent delta-time scaling normalized to 30 fps.
 
 ## Technical Details
 
