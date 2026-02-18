@@ -1,10 +1,12 @@
 # 🌹 Blooming Rose Field &nbsp;<!--<a href="FILEEXCHANGE_URL"><img src="https://www.mathworks.com/matlabcentral/images/matlab-file-exchange.svg" height="30"></a>&nbsp;--><a href="https://matlab.mathworks.com/open/github/v1?repo=Vasileios-Bellos/BloomingRoseField"><img src="https://www.mathworks.com/images/responsive/global/open-in-matlab-online.svg" height="30"></a>&nbsp;<a href="https://vasileios-bellos.github.io/BloomingRoseField/"><img src="https://img.shields.io/badge/Live_Demo-Interactive_3D-e6454d?style=flat" height="30"></a>
 
-An interactive 3D flower field rendered entirely in MATLAB using parametric surfaces. A warm point light hovers above the field - roses within its influence radius bloom open; those outside gradually close back into buds. Guide the light with your mouse, arrow keys, or let it sweep the field on its own. Each rose sits on a botanically-inspired stem with a curved Bézier spine, five cupping sepals, and a handful of thorns - all built from first principles with no external meshes or textures. This project extends [Blooming Rose](https://github.com/Vasileios-Bellos/BloomingRose), which animates a single rose through a scripted bloom sequence, into a real-time interactive scene with multiple roses responding dynamically to user input.
+An interactive 3D flower field rendered entirely in MATLAB using parametric surfaces. A warm point light hovers above the field - roses within its influence radius bloom open; those outside gradually close back into buds. Guide the light with your mouse, arrow keys, or let it sweep the field on its own. Each rose sits on a botanically-inspired stem with a curved Bézier spine, five cupping sepals, and a handful of thorns - all built from first principles with no external meshes or textures.
 
 <p align="center">
   <img src="BloomingRoseField.gif" alt="Blooming Rose Field" width="70%">
 </p>
+
+This project extends [Blooming Rose](https://github.com/Vasileios-Bellos/BloomingRose), which animates a single rose through a scripted bloom sequence, into a real-time interactive scene with multiple roses responding dynamically to user input.
 
 ---
 
