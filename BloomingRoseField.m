@@ -391,7 +391,7 @@ GZ = ones(size(GX)) * groundZ;
 
 %% ========== FIGURE SETUP ==========
 close all
-fig = figure('Color', 'k', 'WindowState', 'maximized', 'MenuBar', 'none', 'name', 'Blooming Rose Field', 'NumberTitle', 'off');
+fig = figure('Color', 'k', 'MenuBar', 'none', 'WindowStyle','normal','WindowState','maximized', 'Name', 'Blooming Rose Field', 'NumberTitle', 'off');
 ax = axes('Parent', fig, 'Units', 'normalized', 'Position', [0 0 1 1], 'Nextplot', 'add', 'Clipping', 'off', 'Projection', 'perspective', 'Visible', 'off', 'DataAspectRatio',[1 1 1]);
 
 % Ground
