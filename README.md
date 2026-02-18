@@ -156,8 +156,8 @@ MATLAB R2020a or later (uses `vecnorm`, `ndgrid`, `cospi`). No toolboxes require
 
 ```
 BloomingRoseField.m              - MATLAB script: interactive field with 3 control modes, recording, exporting
-BloomingRoseField.html           - Web demo: Three.js port with 700 roses and touch support
 BloomingRoseField_installer.exe  - Standalone app installer (Windows, requires MATLAB Runtime R2025b)
+index.html                       - Web demo: Three.js port with 700 roses and touch support
 BloomingRoseField.gif            - Animated GIF preview (low resolution)
 BloomingRoseField.mp4            - Video recording (high resolution)
 ```
