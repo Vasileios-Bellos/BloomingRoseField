@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blooming Rose Field</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; background: #050508; }
+  canvas { display: block; }
+  #hud {
+    position: fixed; top: 12px; left: 0; right: 0; text-align: center;
+    font: bold 13px/1 'Segoe UI', system-ui, sans-serif;
+    color: rgba(166,166,115,0.85); pointer-events: none; z-index: 10;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+  }
+  #loading {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; background: #050508;
+    color: #a6a673; font: 14px 'Segoe UI', system-ui, sans-serif; z-index: 100;
+  }
+  #loading .bar { width: 280px; height: 4px; background: #1a1a20; border-radius: 2px; margin-top: 14px; }
+  #loading .fill { height: 100%; width: 0%; background: #a6a673; border-radius: 2px; transition: width 0.1s; }
+</style>
+</head>
+<body>
+<div id="hud"></div>
+<div id="loading">
+  <div id="loadtext">Precomputing bloom levels...</div>
+  <div class="bar"><div class="fill" id="loadbar"></div></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+'use strict';
+
+// ============================================================
+//  PARAMETERS
+// ============================================================
+const NROSES        = 700;
+const N             = 150;
+const A_ROSE        = 1.995653;
+const B_ROSE        = 1.27689;
+const PETAL_NUM     = 3.6;
+const N_BLOOM       = 120;
+const ROSE_SCALE    = 0.55;
+
+const FIELD_EXTENT  = 18;
+const MIN_SEP       = 2.0;
+const GROUND_Z      = -0.10;
+
+const LIGHT_RADIUS      = 0.15;
+const INFLUENCE_RADIUS   = 4.0;
+const LIGHT_HEIGHT       = 2.5;
+const LIGHT_SPEED        = 0.02;
+const LIGHT_COLOR        = [1.0, 0.95, 0.6];
+const INFLUENCE_ALPHA    = 0.08;
+
+const BLOOM_RATE    = 3.0;
+const UNBLOOM_RATE  = 1.5;
+
+const ARROW_SPEED   = 0.8;
+const MOUSE_LERP    = 0.5;
+
+const N_SEPALS      = 5;
+const SEPAL_LENGTH  = 0.26;
+const SEPAL_WIDTH   = 0.08;
+const SEPAL_DROOP   = 0.08;
+
+const STEM_LENGTH     = 2.8;
+const STEM_RADIUS_TOP = 0.032;
+const STEM_RADIUS_BOT = 0.026;
+const N_STEM_LEN      = 20;
+const N_STEM_CIRC     = 10;
+const STEM_LEAN_MAX   = 0.12;
+const STEM_BOW_MAX    = 0.18;
+
+const THORNS_PER_STEM = 3;
+const THORN_HEIGHT    = 0.10;
+const THORN_RADIUS    = 0.020;
+const THORN_COLOR     = [0.30, 0.25, 0.12];
+
+const STEM_COLOR    = [0.18, 0.42, 0.15];
+const SEPAL_COLOR   = [0.22, 0.50, 0.18];
+const GROUND_COLOR  = [0.20, 0.35, 0.12];
+
+// ============================================================
+//  UTILITIES
+// ============================================================
+function linspace(a, b, n) {
+  const arr = new Float64Array(n);
+  if (n === 1) { arr[0] = a; return arr; }
+  for (let i = 0; i < n; i++) arr[i] = a + (b - a) * i / (n - 1);
+  return arr;
+}
+function rand()  { return Math.random(); }
+function randi(lo, hi) { return lo + Math.floor(Math.random() * (hi - lo + 1)); }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function vec3dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+function vec3cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function vec3norm(a) { return Math.sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2]); }
+function vec3normalize(a) { const l=vec3norm(a)||1e-10; return [a[0]/l,a[1]/l,a[2]/l]; }
+function vec3scale(a,s) { return [a[0]*s, a[1]*s, a[2]*s]; }
+function vec3add(a,b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+function vec3sub(a,b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+
+// mod that always returns non-negative
+function mmod(a, b) { return ((a % b) + b) % b; }
+
+// ============================================================
+//  COLORMAP LIBRARY — all 19, exact ranges from MATLAB
+// ============================================================
+function makeMap(r1,r2, g1,g2, b1,b2) {
+  const m = new Float32Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    m[i*3  ] = r1 + t*(r2-r1);
+    m[i*3+1] = g1 + t*(g2-g1);
+    m[i*3+2] = b1 + t*(b2-b1);
+  }
+  return m;
+}
+const CMAPS = [
+  makeMap(.25,1,   0,.08,   .02,.05),   // Classic red
+  makeMap(.55,1,   .22,.72, .10,.50),   // Juliet
+  makeMap(.35,.76, .28,.58, .38,.64),   // Amnesia
+  makeMap(.45,.90, .32,.72, .28,.62),   // Quicksand
+  makeMap(.50,.95, .38,.82, .18,.55),   // Sahara
+  makeMap(.45,.98, .12,.52, .10,.45),   // Coral reef
+  makeMap(.35,1,   .02,.28, .18,.52),   // Hot pink
+  makeMap(.55,.96, .35,.75, .38,.76),   // Blush
+  makeMap(.28,.68, .18,.52, .42,.78),   // Ocean Song
+  makeMap(.45,.95, .28,.75, .02,.12),   // Golden Mustard
+  makeMap(.65,1,   .58,.96, .45,.88),   // Ivory
+  makeMap(.50,1,   .15,.55, .02,.12),   // Free Spirit
+  makeMap(.12,.50, .02,.05, .06,.15),   // Burgundy
+  makeMap(.42,.92, .22,.58, .18,.48),   // Rose gold
+  makeMap(.60,1,   .68,1,   .55,.95),   // White Mondial
+  makeMap(.10,.85, .35,1,   .25,.75),   // Mint green
+  makeMap(.08,.55, .01,.02, .03,.06),   // Black Baccara
+  makeMap(.25,.75, .15,.58, .08,.42),   // Cafe Latte
+  makeMap(.12,.72, .05,.45, .28,.82),   // Aobara
+];
+
+// ============================================================
+//  scalarToRGB — exact match to MATLAB
+// ============================================================
+function scalarToRGB(X, Y, Z, cmap, nVerts) {
+  // C = hypot(hypot(X,Y), Z*0.9)
+  const colors = new Float32Array(nVerts * 3);
+  let cmin = Infinity, cmax = -Infinity;
+  const C = new Float64Array(nVerts);
+  for (let k = 0; k < nVerts; k++) {
+    const c = Math.sqrt(X[k]*X[k] + Y[k]*Y[k] + Z[k]*0.9*Z[k]*0.9);
+    C[k] = c;
+    if (c < cmin) cmin = c;
+    if (c > cmax) cmax = c;
+  }
+  const range = cmax - cmin + 1e-15;
+  for (let k = 0; k < nVerts; k++) {
+    const cn = (C[k] - cmin) / range;
+    const idx = Math.max(0, Math.min(255, Math.round(cn * 255)));
+    colors[k*3  ] = cmap[idx*3  ];
+    colors[k*3+1] = cmap[idx*3+1];
+    colors[k*3+2] = cmap[idx*3+2];
+  }
+  return colors;
+}
+
+// ============================================================
+//  buildHeadRotation — Rodrigues rotation, exact match
+// ============================================================
+function buildHeadRotation(tangent, rotZAngle) {
+  const cz = Math.cos(rotZAngle), sz = Math.sin(rotZAngle);
+  // Rz: rotation around Z
+  const Rz = [cz,-sz,0, sz,cz,0, 0,0,1]; // row-major 3x3
+
+  // Normalize tangent
+  const T = vec3normalize(tangent);
+
+  // Rodrigues: rotate [0,0,1] to T
+  let Rt = [1,0,0, 0,1,0, 0,0,1]; // identity
+  const v = vec3cross([0,0,1], T);
+  const sinA = vec3norm(v);
+  if (sinA > 1e-6) {
+    const vn = vec3scale(v, 1/sinA);
+    const cosA = T[2]; // dot([0,0,1], T)
+    // K = skew-symmetric of vn
+    const K = [0,-vn[2],vn[1], vn[2],0,-vn[0], -vn[1],vn[0],0];
+    const KK = mat3mul(K, K);
+    // Rt = I + sinA*K + (1-cosA)*(K*K)
+    Rt[0] = 1 + sinA*K[0] + (1-cosA)*KK[0];
+    Rt[1] =     sinA*K[1] + (1-cosA)*KK[1];
+    Rt[2] =     sinA*K[2] + (1-cosA)*KK[2];
+    Rt[3] =     sinA*K[3] + (1-cosA)*KK[3];
+    Rt[4] = 1 + sinA*K[4] + (1-cosA)*KK[4];
+    Rt[5] =     sinA*K[5] + (1-cosA)*KK[5];
+    Rt[6] =     sinA*K[6] + (1-cosA)*KK[6];
+    Rt[7] =     sinA*K[7] + (1-cosA)*KK[7];
+    Rt[8] = 1 + sinA*K[8] + (1-cosA)*KK[8];
+  }
+
+  // Rm = Rt * Rz (both row-major 3x3)
+  return mat3mul(Rt, Rz);
+}
+
+// Row-major 3x3 matrix multiply
+function mat3mul(A, B) {
+  const C = new Array(9);
+  for (let r = 0; r < 3; r++)
+    for (let c = 0; c < 3; c++)
+      C[r*3+c] = A[r*3]*B[c] + A[r*3+1]*B[3+c] + A[r*3+2]*B[6+c];
+  return C;
+}
+
+// Transpose row-major 3x3
+function mat3transpose(M) {
+  return [M[0],M[3],M[6], M[1],M[4],M[7], M[2],M[5],M[8]];
+}
+
+function transformPoint(px, py, pz, Rm, sc, ox, oy, oz) {
+  return [
+    sc * (Rm[0]*px + Rm[1]*py + Rm[2]*pz) + ox,
+    sc * (Rm[3]*px + Rm[4]*py + Rm[5]*pz) + oy,
+    sc * (Rm[6]*px + Rm[7]*py + Rm[8]*pz) + oz
+  ];
+}
+
+// ============================================================
+//  FIELD LAYOUT — Poisson-disk-ish placement
+// ============================================================
+function generateFieldLayout(nRoses) {
+  const spawnYBack = -20;
+  const spawnYFront = 18; // pulled back slightly from 20
+  const spawnY = (spawnYFront - spawnYBack) / 2; // half-range for halfWidth calc
+  const spawnYMid = (spawnYFront + spawnYBack) / 2;
+  const xAtFront = 14;
+  const xAtBack = 38;
+  function halfWidthAt(y) {
+    const t = (y - spawnYBack) / (spawnYFront - spawnYBack); // 0=back, 1=front
+    return xAtBack + t * (xAtFront - xAtBack);
+  }
+
+  const positions = [];
+  let placed = 0;
+  let attempts = 0;
+  // Pass 1: 35% uniform
+  const pass1 = Math.round(nRoses * 0.35);
+  while (placed < pass1 && attempts < 200000) {
+    const cy = spawnYBack + rand() * (spawnYFront - spawnYBack);
+    const hw = halfWidthAt(cy);
+    const cx = (rand()-0.5)*2*hw;
+    let ok = true;
+    for (let i = 0; i < placed; i++) {
+      const dx = positions[i][0]-cx, dy = positions[i][1]-cy;
+      if (Math.sqrt(dx*dx+dy*dy) <= MIN_SEP) { ok = false; break; }
+    }
+    if (ok) { positions.push([cx, cy]); placed++; }
+    attempts++;
+  }
+  // Pass 2: 35% in front half
+  const pass2 = Math.round(nRoses * 0.70);
+  attempts = 0;
+  while (placed < pass2 && attempts < 200000) {
+    const cy = spawnYMid + rand() * (spawnYFront - spawnYMid);
+    const hw = halfWidthAt(cy);
+    const cx = (rand()-0.5)*2*hw;
+    let ok = true;
+    for (let i = 0; i < placed; i++) {
+      const dx = positions[i][0]-cx, dy = positions[i][1]-cy;
+      if (Math.sqrt(dx*dx+dy*dy) <= MIN_SEP) { ok = false; break; }
+    }
+    if (ok) { positions.push([cx, cy]); placed++; }
+    attempts++;
+  }
+  // Pass 3: 30% packed into very front strip (Y = +5 to +14)
+  attempts = 0;
+  while (placed < nRoses && attempts < 200000) {
+    const cy = 9 + rand() * 9; // +9 to +18
+    const hw = halfWidthAt(cy);
+    const cx = (rand()-0.5)*2*hw;
+    let ok = true;
+    for (let i = 0; i < placed; i++) {
+      const dx = positions[i][0]-cx, dy = positions[i][1]-cy;
+      if (Math.sqrt(dx*dx+dy*dy) <= MIN_SEP) { ok = false; break; }
+    }
+    if (ok) { positions.push([cx, cy]); placed++; }
+    attempts++;
+  }
+  return positions;
+}
+
+// ============================================================
+//  PRECOMPUTE BLOOM LEVELS
+// ============================================================
+function precomputeBloom(callback) {
+  const r = linspace(0, 1, N);
+  const theta = linspace(-2, 20*Math.PI, N);
+
+  // Precompute ndgrid values and xPetal (N*N flat arrays, row-major: idx = i*N+j)
+  const nVerts = N * N;
+  const RR = new Float64Array(nVerts);
+  const THETA = new Float64Array(nVerts);
+  const xPetal = new Float64Array(nVerts);
+
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < N; j++) {
+      const k = i * N + j;
+      RR[k] = r[i];
+      THETA[k] = theta[j];
+      // xPetal = 1 - (1/2)*((5/4)*(1 - mod(petalNum*THETA, 2*pi)/pi)^2 - 1/4)^2
+      const modVal = mmod(PETAL_NUM * theta[j], 2*Math.PI);
+      const inner = (5/4) * Math.pow(1 - modVal/Math.PI, 2) - 1/4;
+      xPetal[k] = 1 - 0.5 * inner * inner;
+    }
+  }
+
+  // Bloom level openness (matching MATLAB exactly)
+  const fNorm = linspace(1, 48, N_BLOOM);
+  const openness = new Float64Array(N_BLOOM);
+  const opencenter = new Float64Array(N_BLOOM);
+  for (let bi = 0; bi < N_BLOOM; bi++) {
+    // cospi(x) = cos(pi*x)
+    openness[bi] = 1.05 - Math.cos(Math.PI * fNorm[bi] / (48/2.5)) * Math.pow(1 - fNorm[bi]/48, 2);
+    opencenter[bi] = openness[bi] * 0.2;
+  }
+
+  // Precompute all bloom levels
+  const bloomData = new Array(N_BLOOM);
+
+  let bi = 0;
+  const loadbar = document.getElementById('loadbar');
+  function computeNext() {
+    const bx = new Float32Array(nVerts);
+    const by = new Float32Array(nVerts);
+    const bz = new Float32Array(nVerts);
+
+    const phiLin = linspace(opencenter[bi], openness[bi], N);
+    const phiK = new Float64Array(N);
+    for (let j = 0; j < N; j++) phiK[j] = (Math.PI/2) * phiLin[j] * phiLin[j];
+
+    for (let i = 0; i < N; i++) {
+      const ri = r[i];
+      const ri2 = ri * ri;
+      const yCoeff = A_ROSE * ri2 * Math.pow(B_ROSE * ri - 1, 2);
+
+      for (let j = 0; j < N; j++) {
+        const k = i * N + j;
+        const sinPhi = Math.sin(phiK[j]);
+        const cosPhi = Math.cos(phiK[j]);
+        const yK = yCoeff * sinPhi;
+        const R2 = xPetal[k] * (ri * sinPhi + yK * cosPhi);
+        const sinT = Math.sin(theta[j]);
+        const cosT = Math.cos(theta[j]);
+        bx[k] = R2 * sinT;
+        by[k] = R2 * cosT;
+        bz[k] = xPetal[k] * (ri * cosPhi - yK * sinPhi);
+      }
+    }
+    bloomData[bi] = { x: bx, y: by, z: bz };
+    bi++;
+    loadbar.style.width = (bi / N_BLOOM * 33) + '%';
+
+    if (bi < N_BLOOM) {
+      setTimeout(computeNext, 0);
+    } else {
+      setTimeout(() => callback(bloomData), 50);
+    }
+  }
+  computeNext();
+}
+
+// ============================================================
+//  BUILD SURFACE INDEX BUFFER (shared by all roses)
+// ============================================================
+function buildGridIndices(rows, cols) {
+  const indices = [];
+  for (let i = 0; i < rows-1; i++) {
+    for (let j = 0; j < cols-1; j++) {
+      const a = i*cols+j, b = (i+1)*cols+j, c = (i+1)*cols+j+1, d = i*cols+j+1;
+      indices.push(a, b, c, a, c, d);
+    }
+  }
+  return new Uint32Array(indices);
+}
+
+// ============================================================
+//  BUILD STEM (Bezier curve + Frenet tube)
+// ============================================================
+function buildStem(baseX, baseY, sc) {
+  const h = STEM_LENGTH * sc;
+
+  // Random lean
+  const leanMag = h * STEM_LEAN_MAX * (0.2 + 0.8*rand());
+  const leanAng = rand() * 2*Math.PI;
+  const lean_dx = leanMag * Math.cos(leanAng);
+  const lean_dy = leanMag * Math.sin(leanAng);
+
+  // Random bow
+  const bowMag = h * STEM_BOW_MAX * (0.15 + 0.85*rand());
+  const bowAng = leanAng + Math.PI/2 + (rand()-0.5)*Math.PI*0.7;
+  const bow_dx = bowMag * Math.cos(bowAng);
+  const bow_dy = bowMag * Math.sin(bowAng);
+
+  // Bezier control points
+  const P0 = [baseX, baseY, GROUND_Z];
+  const P3 = [baseX+lean_dx, baseY+lean_dy, GROUND_Z+h];
+  const P1 = [baseX, baseY, GROUND_Z+h*0.35];
+  const P2 = [baseX+lean_dx+bow_dx, baseY+lean_dy+bow_dy, GROUND_Z+h*0.65];
+
+  // Evaluate Bezier spine & tangent
+  const tBez = linspace(0, 1, N_STEM_LEN);
+  const spine = [], tang = [];
+  for (let si = 0; si < N_STEM_LEN; si++) {
+    const tt = tBez[si], tt1 = 1-tt;
+    spine.push([
+      tt1*tt1*tt1*P0[0] + 3*tt1*tt1*tt*P1[0] + 3*tt1*tt*tt*P2[0] + tt*tt*tt*P3[0],
+      tt1*tt1*tt1*P0[1] + 3*tt1*tt1*tt*P1[1] + 3*tt1*tt*tt*P2[1] + tt*tt*tt*P3[1],
+      tt1*tt1*tt1*P0[2] + 3*tt1*tt1*tt*P1[2] + 3*tt1*tt*tt*P2[2] + tt*tt*tt*P3[2]
+    ]);
+    const td = [
+      3*tt1*tt1*(P1[0]-P0[0]) + 6*tt1*tt*(P2[0]-P1[0]) + 3*tt*tt*(P3[0]-P2[0]),
+      3*tt1*tt1*(P1[1]-P0[1]) + 6*tt1*tt*(P2[1]-P1[1]) + 3*tt*tt*(P3[1]-P2[1]),
+      3*tt1*tt1*(P1[2]-P0[2]) + 6*tt1*tt*(P2[2]-P1[2]) + 3*tt*tt*(P3[2]-P2[2])
+    ];
+    tang.push(vec3normalize(td));
+  }
+
+  // Radius profile
+  const rProf = new Float64Array(N_STEM_LEN);
+  const rpScale = 0.90 + 0.20*rand();
+  for (let si = 0; si < N_STEM_LEN; si++) {
+    const t = tBez[si];
+    rProf[si] = (STEM_RADIUS_TOP + (STEM_RADIUS_BOT - STEM_RADIUS_TOP)*t
+                 + 0.015*Math.exp(-Math.pow(t/0.06, 2))) * rpScale;
+  }
+
+  // Frenet frame (reference-vector method)
+  const nrm = [], bnrm = [];
+  for (let si = 0; si < N_STEM_LEN; si++) {
+    let refVec = [1,0,0];
+    let n = vec3cross(tang[si], refVec);
+    if (vec3norm(n) < 1e-6) {
+      refVec = [0,1,0];
+      n = vec3cross(tang[si], refVec);
+    }
+    n = vec3normalize(n);
+    const b = vec3normalize(vec3cross(tang[si], n));
+    nrm.push(n);
+    bnrm.push(b);
+  }
+
+  // Build tube mesh
+  const phiCirc = linspace(0, 2*Math.PI, N_STEM_CIRC);
+  const nV = N_STEM_LEN * N_STEM_CIRC;
+  const positions = new Float32Array(nV * 3);
+  for (let si = 0; si < N_STEM_LEN; si++) {
+    for (let sj = 0; sj < N_STEM_CIRC; sj++) {
+      const cp = Math.cos(phiCirc[sj]), sp = Math.sin(phiCirc[sj]);
+      const ox = rProf[si] * (nrm[si][0]*cp + bnrm[si][0]*sp);
+      const oy = rProf[si] * (nrm[si][1]*cp + bnrm[si][1]*sp);
+      const oz = rProf[si] * (nrm[si][2]*cp + bnrm[si][2]*sp);
+      const idx = (si*N_STEM_CIRC + sj) * 3;
+      positions[idx  ] = spine[si][0] + ox;
+      positions[idx+1] = spine[si][1] + oy;
+      positions[idx+2] = spine[si][2] + oz;
+    }
+  }
+
+  return { positions, spine, tang, nrm, bnrm, rProf, topPos: P3, topTang: tang[N_STEM_LEN-1] };
+}
+
+// ============================================================
+//  BUILD SEPALS
+// ============================================================
+function buildSepals(topPos, Rm, sc) {
+  const nSu = 10, nSv = 6;
+  const uSep = linspace(0, 1, nSu);
+  const vSep = linspace(-1, 1, nSv);
+
+  const allPositions = [];
+
+  for (let s = 0; s < N_SEPALS; s++) {
+    const ang = s*2*Math.PI/N_SEPALS + Math.PI/10 + rand()*0.3;
+    const cosA = Math.cos(ang), sinA = Math.sin(ang);
+    const nV = nSu * nSv;
+    const pos = new Float32Array(nV * 3);
+
+    for (let i = 0; i < nSu; i++) {
+      const u = uSep[i];
+      const sepalWP = SEPAL_WIDTH * Math.pow(Math.sin(Math.PI*u), 0.6) * (1 - u*u*u);
+      const zLocalBase = SEPAL_LENGTH * u * (1 - 0.5*u) + SEPAL_DROOP * u*u;
+      const rLocal = STEM_RADIUS_TOP*(1-u*0.3) + SEPAL_LENGTH*0.4*Math.pow(u, 1.5);
+
+      for (let j = 0; j < nSv; j++) {
+        const v = vSep[j];
+        const xLocal = sepalWP * v;
+        const cupF = 0.02 * (1 - v*v);
+        const zLocal = zLocalBase + cupF * u;
+
+        // Rotate sepal around stem axis
+        const Xsep = rLocal * cosA + xLocal * (-sinA);
+        const Ysep = rLocal * sinA + xLocal * cosA;
+        const Zsep = zLocal;
+
+        // Apply head rotation (same as rose head) + scale + offset
+        const tp = transformPoint(Xsep, Ysep, Zsep, Rm, sc, topPos[0], topPos[1], topPos[2]);
+        const idx = (i*nSv + j) * 3;
+        pos[idx  ] = tp[0];
+        pos[idx+1] = tp[1];
+        pos[idx+2] = tp[2];
+      }
+    }
+    allPositions.push({ positions: pos, rows: nSu, cols: nSv });
+  }
+  return allPositions;
+}
+
+// ============================================================
+//  BUILD THORNS
+// ============================================================
+function buildThorns(spine, tang, nrm, bnrm, rProf, sc) {
+  const nTh = Math.max(1, THORNS_PER_STEM + randi(-1, 1));
+  const nTu = 8, nTv = 10;
+
+  // Thorn cone template (meshgrid: Uth varies along cols, Vth along rows)
+  const uLin = linspace(0, 1, nTu);
+  const vLin = linspace(0, 2*Math.PI, nTv);
+
+  // Precompute cone template
+  const coneX = [], coneY = [], coneZ = [];
+  for (let iv = 0; iv < nTv; iv++) {
+    for (let iu = 0; iu < nTu; iu++) {
+      const Rc = THORN_RADIUS * Math.pow(1-uLin[iu], 1.5);
+      coneX.push(Rc * Math.cos(vLin[iv]));
+      coneY.push(Rc * Math.sin(vLin[iv]));
+      coneZ.push(THORN_HEIGHT * uLin[iu]);
+    }
+  }
+
+  const thornPositions = linspace(0.12, 0.85, nTh);
+  let thornAng0 = rand() * 2*Math.PI;
+  const thornAngStep = 2*Math.PI / nTh;
+
+  const allThorns = [];
+
+  for (let th = 0; th < nTh; th++) {
+    let tPos = thornPositions[th] + 0.04*(rand()-0.5);
+    tPos = clamp(tPos, 0.10, 0.90);
+    const thornAng = thornAng0 + th*thornAngStep + 0.3*(rand()-0.5);
+
+    const idx = clamp(Math.round(tPos * (N_STEM_LEN-1)), 0, N_STEM_LEN-1);
+    const bPos = spine[idx];
+    const T = tang[idx];
+    const Nvec = nrm[idx];
+    const Bvec = bnrm[idx];
+
+    // Outward direction on stem cross-section
+    const outDir = vec3add(vec3scale(Nvec, Math.cos(thornAng)), vec3scale(Bvec, Math.sin(thornAng)));
+    // Thorn axis: tilted 30° toward stem tangent
+    let thAxis = vec3add(vec3scale(outDir, Math.cos(Math.PI/6)), vec3scale(T, Math.sin(Math.PI/6)));
+    thAxis = vec3normalize(thAxis);
+
+    // Build local frame for thorn
+    let pRef = Math.abs(vec3dot(thAxis,[1,0,0])) < 0.9 ? [1,0,0] : [0,1,0];
+    let thN = vec3normalize(vec3cross(thAxis, pRef));
+    let thB = vec3normalize(vec3cross(thAxis, thN));
+
+    const szFactor = (0.85 + 0.30*rand()) * sc / ROSE_SCALE;
+    const nVt = nTv * nTu;
+    const pos = new Float32Array(nVt * 3);
+    for (let k = 0; k < nVt; k++) {
+      const lp = vec3add(vec3add(
+        vec3scale(thN, szFactor*coneX[k]),
+        vec3scale(thB, szFactor*coneY[k])),
+        vec3scale(thAxis, szFactor*coneZ[k]));
+      const wp = vec3add(vec3add(bPos, vec3scale(outDir, rProf[idx])), lp);
+      pos[k*3  ] = wp[0];
+      pos[k*3+1] = wp[1];
+      pos[k*3+2] = wp[2];
+    }
+    allThorns.push({ positions: pos, rows: nTv, cols: nTu });
+  }
+  return allThorns;
+}
+
+// ============================================================
+//  CREATE THREE.JS MESH FROM GRID DATA
+// ============================================================
+function createSurfMesh(positions, rows, cols, color, params) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(new THREE.BufferAttribute(buildGridIndices(rows, cols), 1));
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshPhongMaterial({
+    color: new THREE.Color(color[0], color[1], color[2]),
+    side: params.doubleSide ? THREE.DoubleSide : THREE.FrontSide,
+    shininess: (params.specular || 0.1) * 200,
+    flatShading: false,
+  });
+  return new THREE.Mesh(geo, mat);
+}
+
+// ============================================================
+//  MAIN — runs after bloom precomputation
+// ============================================================
+function main(bloomData) {
+  const loadingDiv = document.getElementById('loading');
+  const loadbar = document.getElementById('loadbar');
+  document.getElementById('loadtext').textContent = 'Calculating field geometry...';
+
+  // --- Scene setup ---
+  const scene = new THREE.Scene();
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(new THREE.Color(0.02, 0.02, 0.05));
+  document.body.appendChild(renderer.domElement);
+
+  // Camera: wider view showing more of the field
+  const camera = new THREE.PerspectiveCamera(48, window.innerWidth/window.innerHeight, 0.1, 200);
+  camera.up.set(0, 0, 1);
+  const d = 26; // 24;
+  const azRad = 0 * Math.PI/180; // -30;
+  const elRad = 20 * Math.PI/180; // 25; 35;
+  camera.position.set(
+    d * Math.cos(elRad) * Math.sin(-azRad),
+    d * Math.cos(elRad) * Math.cos(-azRad),
+    d * Math.sin(elRad)
+  );
+  camera.lookAt(0, 0, -3.5); // -2.0;
+
+  // Arrow keys aligned to screen directions: project camera axes onto ground plane
+  const cfx = -camera.position.x, cfy = -camera.position.y; // forward XY
+  const cfLen = Math.sqrt(cfx*cfx + cfy*cfy);
+  const camFwd = [cfx/cfLen, cfy/cfLen];           // screen-up direction on ground
+  const camRight = [camFwd[1], -camFwd[0]];         // screen-right direction on ground
+
+  // --- Lighting ---
+  // Moving point light (matches hMovingLight)
+  const pointLight = new THREE.PointLight(
+    new THREE.Color(LIGHT_COLOR[0]*0.8, LIGHT_COLOR[1]*0.8, LIGHT_COLOR[2]*0.8),
+    2.5, 50, 1.5
+  );
+  pointLight.position.set(0, 0, GROUND_Z + LIGHT_HEIGHT);
+  scene.add(pointLight);
+
+  // Subtle ambient (matches the infinite light at [0,0,10])
+  const ambLight = new THREE.AmbientLight(new THREE.Color(0.12, 0.12, 0.18), 1.0);
+  scene.add(ambLight);
+
+  // Dim directional from above
+  const dirLight = new THREE.DirectionalLight(new THREE.Color(0.15, 0.15, 0.25), 0.5);
+  dirLight.position.set(0, 0, 10);
+  scene.add(dirLight);
+
+  // --- Ground plane ---
+  const gE = 300; // 120;
+  const groundGeo = new THREE.PlaneGeometry(gE*2, gE*2);
+  const groundMat = new THREE.MeshPhongMaterial({
+    color: new THREE.Color(GROUND_COLOR[0], GROUND_COLOR[1], GROUND_COLOR[2]),
+    shininess: 0
+  });
+  const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+  groundMesh.position.set(0, 0, GROUND_Z);
+  scene.add(groundMesh);
+
+  // --- Generate field layout ---
+  const positions = generateFieldLayout(NROSES);
+  const nRoses = positions.length;
+  const roseScales = new Float64Array(nRoses);
+  const roseRotZ = new Float64Array(nRoses);
+  const roseCmapIdx = new Int32Array(nRoses);
+  for (let ri = 0; ri < nRoses; ri++) {
+    roseScales[ri] = ROSE_SCALE * (0.85 + 0.30*rand());
+    roseRotZ[ri] = rand() * 2*Math.PI;
+    roseCmapIdx[ri] = Math.floor(rand() * CMAPS.length);
+  }
+
+  // --- Build stems, sepals, thorns (batched for loading bar) ---
+  const stemData = [];
+  const roseScRm = [];   // per-rose: { Rm, sc, offset }
+  const rosePos3D = [];   // world position of each rose head
+
+  let ri = 0;
+  const geoBatch = 5;
+
+  function buildNextBatch() {
+    const end = Math.min(ri + geoBatch, nRoses);
+    for (; ri < end; ri++) {
+      const sd = buildStem(positions[ri][0], positions[ri][1], roseScales[ri]);
+      stemData.push(sd);
+
+      // Stem mesh
+      const stemMesh = createSurfMesh(sd.positions, N_STEM_LEN, N_STEM_CIRC,
+        STEM_COLOR, { doubleSide: false, specular: 0.1 });
+      scene.add(stemMesh);
+
+      // Sepals
+      const Rm = buildHeadRotation(sd.topTang, roseRotZ[ri]);
+      const sepals = buildSepals(sd.topPos, Rm, roseScales[ri]);
+      for (const sep of sepals) {
+        const sepMesh = createSurfMesh(sep.positions, sep.rows, sep.cols,
+          SEPAL_COLOR, { doubleSide: true, specular: 0.05 });
+        scene.add(sepMesh);
+      }
+
+      // Thorns
+      const thorns = buildThorns(sd.spine, sd.tang, sd.nrm, sd.bnrm, sd.rProf, roseScales[ri]);
+      for (const th of thorns) {
+        const thMesh = createSurfMesh(th.positions, th.rows, th.cols,
+          THORN_COLOR, { doubleSide: false, specular: 0.05 });
+        scene.add(thMesh);
+      }
+
+      // Cache per-rose transform data
+      roseScRm.push({ Rm, sc: roseScales[ri], offset: sd.topPos });
+      rosePos3D.push(sd.topPos);
+    }
+
+    loadbar.style.width = (33 + ri / nRoses * 33) + '%';
+
+    if (ri < nRoses) {
+      setTimeout(buildNextBatch, 0);
+    } else {
+      finishSetup();
+    }
+  }
+
+  function finishSetup() {
+  document.getElementById('loadtext').textContent = 'Generating rose meshes...';
+  const roseIndices = buildGridIndices(N, N);
+  const mid = Math.round(N_BLOOM / 2) - 1;
+  const nVerts = N * N;
+  const roseMeshes = [];
+  let rhi = 0;
+  const rhBatch = 5;
+
+  function buildNextHeads() {
+    const end = Math.min(rhi + rhBatch, nRoses);
+    for (; rhi < end; rhi++) {
+      const colors = scalarToRGB(
+        bloomData[mid].x, bloomData[mid].y, bloomData[mid].z,
+        CMAPS[roseCmapIdx[rhi]], nVerts
+      );
+      const geo = new THREE.BufferGeometry();
+      const posAttr = new THREE.BufferAttribute(new Float32Array(nVerts * 3), 3);
+      posAttr.setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute('position', posAttr);
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geo.setIndex(new THREE.BufferAttribute(roseIndices, 1));
+      updateRoseGeometry(posAttr.array, bloomData[0], roseScRm[rhi]);
+      geo.computeVertexNormals();
+      const mat = new THREE.MeshPhongMaterial({
+        vertexColors: true,
+        side: THREE.DoubleSide,
+        shininess: 40,
+        flatShading: false,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      scene.add(mesh);
+      roseMeshes.push(mesh);
+    }
+
+    loadbar.style.width = (66 + rhi / nRoses * 34) + '%';
+
+    if (rhi < nRoses) {
+      setTimeout(buildNextHeads, 0);
+    } else {
+      loadingDiv.style.display = 'none';
+      startAnimation(roseMeshes);
+    }
+  }
+  buildNextHeads();
+  }
+
+  function startAnimation(roseMeshes) {
+
+  // --- Light sphere (glowing) ---
+  const lsGeo = new THREE.SphereGeometry(LIGHT_RADIUS, 24, 24);
+  const lsMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(...LIGHT_COLOR) });
+  const lightSphere = new THREE.Mesh(lsGeo, lsMat);
+  lightSphere.position.set(0, 0, GROUND_Z + LIGHT_HEIGHT);
+  scene.add(lightSphere);
+
+  // --- Influence sphere (transparent) ---
+  const liGeo = new THREE.SphereGeometry(INFLUENCE_RADIUS, 32, 32);
+  const liMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(...LIGHT_COLOR),
+    transparent: true, opacity: INFLUENCE_ALPHA,
+    depthWrite: false
+  });
+  const influenceSphere = new THREE.Mesh(liGeo, liMat);
+  influenceSphere.position.set(0, 0, GROUND_Z + LIGHT_HEIGHT);
+  scene.add(influenceSphere);
+
+  // ============================================================
+  //  ANIMATION STATE
+  // ============================================================
+  let mode = 1; // 1=mouse/touch, 2=arrows, 3=auto
+  let paused = false;
+  let lightXY = [0, 0];
+  let arrowXY = [0, 0];
+  let mouseTarget = [0, 0];
+  let mouseSmooth = [0, 0];
+  const keysHeld = { left:false, right:false, up:false, down:false };
+  const fieldLimX = 38;
+  const fieldLimY = 20;
+
+  const bloomState = new Float64Array(nRoses).fill(1);
+  const prevLevel = new Int32Array(nRoses).fill(0); // 0-indexed
+  let t = 0;
+  let lastTime = performance.now();
+  let autoBlend = 1;          // 0 = at start position, 1 = fully on Lissajous path
+  let autoStartXY = [0, 0];   // position when mode 3 was activated
+
+  const modeLabels = ['1: Mouse/Touch: Follow', '2: Arrow Keys: Move', '3: Auto (Lissajous)'];
+  const hud = document.getElementById('hud');
+  function updateHud() {
+    hud.textContent = modeLabels[mode-1] + '   |   1/2/3: Switch Mode   | Space: Pause/Unpause';
+  }
+  updateHud();
+
+  // ============================================================
+  //  CONTROLS
+  // ============================================================
+  document.addEventListener('keydown', (e) => {
+    switch (e.key) {
+      case ' ': e.preventDefault(); paused = !paused; break;
+      case '1': mode = 1; mouseSmooth = [...lightXY]; updateHud(); break;
+      case '2': mode = 2; arrowXY = [...lightXY]; updateHud(); break;
+      case '3': mode = 3; autoStartXY = [...lightXY]; autoBlend = 0; updateHud(); break;
+      case 'ArrowLeft':  e.preventDefault(); keysHeld.left = true; break;
+      case 'ArrowRight': e.preventDefault(); keysHeld.right = true; break;
+      case 'ArrowUp':    e.preventDefault(); keysHeld.up = true; break;
+      case 'ArrowDown':  e.preventDefault(); keysHeld.down = true; break;
+    }
+  });
+  document.addEventListener('keyup', (e) => {
+    switch (e.key) {
+      case 'ArrowLeft':  keysHeld.left = false; break;
+      case 'ArrowRight': keysHeld.right = false; break;
+      case 'ArrowUp':    keysHeld.up = false; break;
+      case 'ArrowDown':  keysHeld.down = false; break;
+    }
+  });
+
+  // Mouse: project to light-height plane
+  const raycaster = new THREE.Raycaster();
+  const mouseNDC = new THREE.Vector2();
+  const lightPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -(GROUND_Z + LIGHT_HEIGHT));
+  const hitPoint = new THREE.Vector3();
+
+  function updateMouseTarget(clientX, clientY) {
+    mouseNDC.x = (clientX / window.innerWidth) * 2 - 1;
+    mouseNDC.y = -(clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouseNDC, camera);
+    if (raycaster.ray.intersectPlane(lightPlane, hitPoint)) {
+      const mx = clamp(hitPoint.x, -fieldLimX, fieldLimX);
+      const my = clamp(hitPoint.y, -fieldLimY, fieldLimY);
+      mouseTarget = [mx, my];
+    }
+  }
+
+  document.addEventListener('mousemove', (e) => {
+    updateMouseTarget(e.clientX, e.clientY);
+  });
+  document.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    updateMouseTarget(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: false });
+  document.addEventListener('touchstart', (e) => {
+    updateMouseTarget(e.touches[0].clientX, e.touches[0].clientY);
+  });
+
+  // Window resize
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ============================================================
+  //  ANIMATION LOOP
+  // ============================================================
+  function animate() {
+    requestAnimationFrame(animate);
+    if (paused) return;
+
+    const now = performance.now();
+    const rawDt = (now - lastTime) / 1000;
+    const dt = Math.min(rawDt, 0.05); // cap to avoid jumps
+    lastTime = now;
+    const frameScale = dt *30; // normalize to ~30fps
+
+    // --- Compute light XY based on mode ---
+    let lx, ly;
+    switch (mode) {
+      case 1: // Mouse follow
+        mouseSmooth[0] += MOUSE_LERP * frameScale * (mouseTarget[0] - mouseSmooth[0]);
+        mouseSmooth[1] += MOUSE_LERP * frameScale * (mouseTarget[1] - mouseSmooth[1]);
+        lx = mouseSmooth[0];
+        ly = mouseSmooth[1];
+        break;
+      case 2: // Arrow keys — aligned to screen directions
+        const rawRight = (keysHeld.right?1:0) - (keysHeld.left?1:0);
+        const rawUp = (keysHeld.up?1:0) - (keysHeld.down?1:0);
+        const vx = ARROW_SPEED * (rawRight * camRight[0] + rawUp * camFwd[0]);
+        const vy = ARROW_SPEED * (rawRight * camRight[1] + rawUp * camFwd[1]);
+        arrowXY[0] = clamp(arrowXY[0] + vx*frameScale, -fieldLimX, fieldLimX);
+        arrowXY[1] = clamp(arrowXY[1] + vy*frameScale, -fieldLimY, fieldLimY);
+        lx = arrowXY[0];
+        ly = arrowXY[1];
+        break;
+      case 3: // Auto: Lissajous — follows trapezoidal field shape
+        const targetLy = 0 + 18 * Math.sin(t * 0.7);
+        const tFrac = (targetLy - (-20)) / (18 - (-20));
+        const halfW = 38 + tFrac * (14 - 38);
+        const targetLx = halfW * 0.85 * Math.sin(t * 1.0);
+        // Smooth blend from start position into path
+        autoBlend = Math.min(1, autoBlend + 0.8 * frameScale / 30);
+        const b = autoBlend * autoBlend * (3 - 2 * autoBlend); // smoothstep
+        lx = autoStartXY[0] + b * (targetLx - autoStartXY[0]);
+        ly = autoStartXY[1] + b * (targetLy - autoStartXY[1]);
+        break;    }
+
+    const lz = GROUND_Z + LIGHT_HEIGHT + 0.3 * Math.sin(t * 0.4);
+    lightXY = [lx, ly];
+
+    // Update light visuals
+    lightSphere.position.set(lx, ly, lz);
+    influenceSphere.position.set(lx, ly, lz);
+    pointLight.position.set(lx, ly, lz);
+
+    // --- Bloom state update ---
+    for (let ri = 0; ri < nRoses; ri++) {
+      const dx = rosePos3D[ri][0] - lx;
+      const dy = rosePos3D[ri][1] - ly;
+      const dz = rosePos3D[ri][2] - lz;
+      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+      if (dist < INFLUENCE_RADIUS) {
+        const rawProx = 1 - dist/INFLUENCE_RADIUS;
+        // Smooth falloff with a floor so edge roses don't bloom choppily
+        const proximity = 0.25 + 0.75 * rawProx * rawProx;
+        bloomState[ri] = Math.min(N_BLOOM, bloomState[ri] + BLOOM_RATE * proximity * frameScale);
+      } else {
+        bloomState[ri] = Math.max(1, bloomState[ri] - UNBLOOM_RATE * frameScale);
+      }
+
+      // Quantize to integer (0-indexed)
+      const curLevel = clamp(Math.round(bloomState[ri]) - 1, 0, N_BLOOM - 1);
+
+      if (curLevel !== prevLevel[ri]) {
+        const geo = roseMeshes[ri].geometry;
+        const posArr = geo.attributes.position.array;
+        updateRoseGeometry(posArr, bloomData[curLevel], roseScRm[ri]);
+        geo.attributes.position.needsUpdate = true;
+        geo.computeVertexNormals();
+        prevLevel[ri] = curLevel;
+      }
+    }
+
+    t += LIGHT_SPEED * frameScale;
+    renderer.render(scene, camera);
+  }
+
+  animate();
+  } // end startAnimation
+
+  buildNextBatch();
+}
+
+// ============================================================
+//  UPDATE ROSE GEOMETRY — transform precomputed bloom to world
+// ============================================================
+function updateRoseGeometry(posArr, bloom, roseData) {
+  const { Rm, sc, offset } = roseData;
+  const nVerts = N * N;
+  for (let k = 0; k < nVerts; k++) {
+    const bx = bloom.x[k], by = bloom.y[k], bz = bloom.z[k];
+    // result[j] = sc * (row j of Rm) dot (bx,by,bz) + offset[j]
+    const k3 = k * 3;
+    posArr[k3  ] = sc * (Rm[0]*bx + Rm[1]*by + Rm[2]*bz) + offset[0];
+    posArr[k3+1] = sc * (Rm[3]*bx + Rm[4]*by + Rm[5]*bz) + offset[1];
+    posArr[k3+2] = sc * (Rm[6]*bx + Rm[7]*by + Rm[8]*bz) + offset[2];
+  }
+}
+
+// ============================================================
+//  KICK OFF
+// ============================================================
+precomputeBloom(function(bloomData) {
+  main(bloomData);
+});
+</script>
+</body>
+</html>
