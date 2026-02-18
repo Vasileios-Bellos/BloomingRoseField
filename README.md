@@ -7,7 +7,6 @@ This project extends [Blooming Rose](https://github.com/Vasileios-Bellos/Bloomin
 <p align="center">
   <img src="BloomingRoseField.gif" alt="Blooming Rose Field" width="70%">
 </p>
----
 
 ## Quick Start
 
