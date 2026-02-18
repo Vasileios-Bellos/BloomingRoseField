@@ -14,7 +14,7 @@ This project extends [Blooming Rose](https://github.com/Vasileios-Bellos/Bloomin
 BloomingRoseField
 ```
 
-The scene opens full-screen. Move your mouse to guide the light across the field and watch nearby roses bloom.
+The scene opens on fullscreen. Move your mouse to guide the light across the field and watch nearby roses bloom.
 
 ## Control Modes
 
