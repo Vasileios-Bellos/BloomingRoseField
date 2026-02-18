@@ -2,12 +2,11 @@
 
 An interactive 3D flower field rendered entirely in MATLAB using parametric surfaces. A warm point light hovers above the field - roses within its influence radius bloom open; those outside gradually close back into buds. Guide the light with your mouse, arrow keys, or let it sweep the field on its own. Each rose sits on a botanically-inspired stem with a curved Bézier spine, five cupping sepals, and a handful of thorns - all built from first principles with no external meshes or textures.
 
+This project extends [Blooming Rose](https://github.com/Vasileios-Bellos/BloomingRose), which animates a single rose through a scripted bloom sequence, into a real-time interactive scene with multiple roses responding dynamically to user input.
+
 <p align="center">
   <img src="BloomingRoseField.gif" alt="Blooming Rose Field" width="70%">
 </p>
-
-This project extends [Blooming Rose](https://github.com/Vasileios-Bellos/BloomingRose), which animates a single rose through a scripted bloom sequence, into a real-time interactive scene with multiple roses responding dynamically to user input.
-
 ---
 
 ## Quick Start
